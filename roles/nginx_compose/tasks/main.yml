@@ -1,0 +1,229 @@
+---
+- name: Validate input
+  ansible.builtin.import_tasks: validate.yml
+
+- name: Reset static mount list
+  ansible.builtin.set_fact:
+    nginx_static_mounts: []
+  changed_when: false
+
+- name: Add static bind mounts
+  ansible.builtin.set_fact:
+    nginx_static_mounts: >-
+      {{
+        nginx_static_mounts + [
+          item.1.host_path ~ ':'
+          ~ ((item.1.mount_path | default(item.1.root | default(item.1.alias))) | regex_replace('/$', ''))
+          ~ ':ro'
+        ]
+      }}
+  loop: "{{ nginx_domains | subelements('locations', skip_missing=True) }}"
+  loop_control:
+    label: "{{ item.0.name }}{{ item.1.path }}"
+  when: item.1.host_path is defined
+  no_log: true
+  changed_when: false
+
+- name: Create deploy directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ nginx_deploy_dir }}"
+    - "{{ nginx_deploy_dir }}/bin"
+    - "{{ nginx_deploy_dir }}/nginx/conf.d"
+    - "{{ nginx_deploy_dir }}/nginx/htpasswd"
+    - "{{ nginx_deploy_dir }}/nginx/robots"
+    - "{{ nginx_deploy_dir }}/nginx/logs"
+    - "{{ nginx_deploy_dir }}/nginx/history"
+    - "{{ nginx_deploy_dir }}/certbot/conf"
+    - "{{ nginx_deploy_dir }}/certbot/www/.well-known/acme-challenge"
+
+- name: Install nginx.conf
+  ansible.builtin.copy:
+    src: "{{ nginx_main_config_src if nginx_main_config_src | length > 0 else 'nginx.conf' }}"
+    dest: "{{ nginx_deploy_dir }}/nginx/nginx.conf"
+    mode: "0644"
+    force: "{{ nginx_main_config_overwrite | bool }}"
+
+- name: Look for conf.d include
+  ansible.builtin.command:
+    argv:
+      - grep
+      - -q
+      - -F
+      - "include /etc/nginx/conf.d/*.conf;"
+      - "{{ nginx_deploy_dir }}/nginx/nginx.conf"
+  register: nginx_main_include
+  changed_when: false
+  failed_when: false
+
+- name: nginx.conf must include conf.d
+  ansible.builtin.fail:
+    msg: >-
+      {{ nginx_deploy_dir }}/nginx/nginx.conf is missing
+      include /etc/nginx/conf.d/*.conf;
+  when: nginx_main_include.rc != 0
+
+- name: Render default server
+  ansible.builtin.template:
+    src: 00-default.conf.j2
+    dest: "{{ nginx_deploy_dir }}/nginx/conf.d/00-default.conf"
+    mode: "0644"
+
+- name: Render renew.sh
+  ansible.builtin.template:
+    src: renew.sh.j2
+    dest: "{{ nginx_deploy_dir }}/bin/renew.sh"
+    mode: "0755"
+
+- name: Render certbot renew loop
+  ansible.builtin.template:
+    src: certbot-renew-loop.sh.j2
+    dest: "{{ nginx_deploy_dir }}/bin/certbot-renew-loop.sh"
+    mode: "0755"
+
+- name: Render docker-compose.yml
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ nginx_deploy_dir }}/docker-compose.yml"
+    mode: "0644"
+
+- name: Create pebble directory
+  ansible.builtin.file:
+    path: "{{ nginx_deploy_dir }}/pebble"
+    state: directory
+    mode: "0755"
+  when: nginx_local_acme | bool
+
+- name: Render pebble config
+  ansible.builtin.template:
+    src: pebble-config.json.j2
+    dest: "{{ nginx_deploy_dir }}/pebble/pebble-config.json"
+    mode: "0644"
+  when: nginx_local_acme | bool
+
+- name: Install pebble CA
+  ansible.builtin.copy:
+    src: pebble.minica.pem
+    dest: "{{ nginx_deploy_dir }}/pebble/pebble.minica.pem"
+    mode: "0644"
+  when: nginx_local_acme | bool
+
+- name: Start pebble
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --project-directory
+      - "{{ nginx_deploy_dir }}"
+      - up
+      - -d
+      - pebble
+  register: pebble_up
+  changed_when: (pebble_up.stdout + pebble_up.stderr) is search('Created|Started|Recreated')
+  when: nginx_local_acme | bool
+
+- name: Wait for pebble directory
+  ansible.builtin.command:
+    argv:
+      - curl
+      - -kfsS
+      - --max-time
+      - "2"
+      - "https://127.0.0.1:{{ pebble_port }}/dir"
+  register: pebble_ready
+  until: pebble_ready.rc == 0
+  retries: 30
+  delay: 1
+  changed_when: false
+  when: nginx_local_acme | bool
+
+- name: certbot --version
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --project-directory
+      - "{{ nginx_deploy_dir }}"
+      - run
+      - --rm
+      - --no-deps
+      - --entrypoint
+      - certbot
+      - certbot
+      - --version
+  register: certbot_version
+  changed_when: false
+
+- name: Start nginx
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --project-directory
+      - "{{ nginx_deploy_dir }}"
+      - up
+      - -d
+      - --remove-orphans
+      - nginx
+  register: nginx_up
+  changed_when: (nginx_up.stdout + nginx_up.stderr) is search('Created|Started|Recreated')
+
+- name: Wait until nginx accepts config
+  ansible.builtin.include_tasks: reload.yml
+
+- name: Configure domains
+  ansible.builtin.include_tasks: domain.yml
+  loop: "{{ nginx_domains }}"
+  loop_control:
+    loop_var: domain
+    label: "{{ domain.name }}"
+
+- name: Make letsencrypt tree readable on the host
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --project-directory
+      - "{{ nginx_deploy_dir }}"
+      - run
+      - --rm
+      - --no-deps
+      - --entrypoint
+      - chmod
+      - certbot
+      - -R
+      - a+rX
+      - /etc/letsencrypt
+  changed_when: false
+
+- name: Start certbot renewal loop
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --project-directory
+      - "{{ nginx_deploy_dir }}"
+      - up
+      - -d
+      - certbot
+  register: certbot_up
+  changed_when: (certbot_up.stdout + certbot_up.stderr) is search('Created|Started|Recreated')
+
+- name: Install renewal cron
+  ansible.builtin.cron:
+    name: "nginx-proxy renew {{ nginx_compose_project_name }}"
+    minute: "15"
+    hour: "3"
+    job: "{{ nginx_deploy_dir }}/bin/renew.sh"
+  when: nginx_install_renew_cron | bool
+
+- name: Deploy summary
+  ansible.builtin.debug:
+    msg: >-
+      {{ nginx_deploy_dir }} on {{ nginx_http_port }}/{{ nginx_https_port }}.
+      Domains: {{ nginx_domains | map(attribute='name') | list | join(', ') }}.
+      {{ certbot_version.stdout | default(certbot_version.stderr) }}.
+      Renew with {{ nginx_deploy_dir }}/bin/renew.sh

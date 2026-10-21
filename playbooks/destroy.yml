@@ -1,0 +1,44 @@
+---
+- name: Remove the nginx stack
+  hosts: nginx
+  gather_facts: false
+  become: "{{ nginx_become | bool }}"
+  tasks:
+    - name: Compose down
+      ansible.builtin.command:
+        argv:
+          - docker
+          - compose
+          - --project-directory
+          - "{{ nginx_deploy_dir }}"
+          - down
+          - --remove-orphans
+        removes: "{{ nginx_deploy_dir }}/docker-compose.yml"
+
+    - name: Stat deploy directory
+      ansible.builtin.stat:
+        path: "{{ nginx_deploy_dir }}"
+      register: deploy_dir
+
+    - name: Delete files created as root in the container
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - -v
+          - "{{ nginx_deploy_dir }}:/data"
+          - --entrypoint
+          - sh
+          - certbot/certbot:v2.11.0
+          - -c
+          - "rm -rf /data/* /data/.[!.]*"
+      when:
+        - nginx_destroy_files | default(true) | bool
+        - deploy_dir.stat.isdir | default(false)
+
+    - name: Remove deploy directory
+      ansible.builtin.file:
+        path: "{{ nginx_deploy_dir }}"
+        state: absent
+      when: nginx_destroy_files | default(true) | bool

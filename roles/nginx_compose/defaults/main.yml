@@ -1,0 +1,32 @@
+---
+nginx_deploy_dir: /opt/nginx-proxy
+nginx_compose_project_name: nginx-proxy
+
+nginx_image: nginx:1.27-alpine
+certbot_image: certbot/certbot:v2.11.0
+
+nginx_http_port: 80
+nginx_https_port: 443
+nginx_listen_ipv6: false
+
+nginx_main_config_src: ""
+nginx_main_config_overwrite: true
+
+certbot_email: ""
+certbot_staging: false
+certbot_server: ""
+certbot_agree_tos: true
+certbot_renew_seconds: 43200
+
+nginx_local_acme: false
+pebble_image: ghcr.io/letsencrypt/pebble@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199
+pebble_port: 14000
+
+nginx_acme_probe: true
+
+nginx_install_renew_cron: false
+
+nginx_become: false
+nginx_destroy_files: true
+
+nginx_domains: []

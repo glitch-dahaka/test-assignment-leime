@@ -1,0 +1,65 @@
+name: "{{ nginx_compose_project_name }}"
+
+services:
+  nginx:
+    image: "{{ nginx_image }}"
+    pull_policy: if_not_present
+    restart: unless-stopped
+    ports:
+      - "{{ nginx_http_port }}:80"
+      - "{{ nginx_https_port }}:443"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - "{{ nginx_deploy_dir }}/nginx/nginx.conf:/etc/nginx/nginx.conf:ro"
+      - "{{ nginx_deploy_dir }}/nginx/conf.d:/etc/nginx/conf.d:ro"
+      - "{{ nginx_deploy_dir }}/nginx/htpasswd:/etc/nginx/htpasswd:ro"
+      - "{{ nginx_deploy_dir }}/nginx/robots:/var/www/robots:ro"
+      - "{{ nginx_deploy_dir }}/nginx/logs:/var/log/nginx"
+      - "{{ nginx_deploy_dir }}/certbot/www:/var/www/certbot:ro"
+      - "{{ nginx_deploy_dir }}/certbot/conf:/etc/letsencrypt:ro"
+{% for mount in nginx_static_mounts | default([]) | unique %}
+      - "{{ mount }}"
+{% endfor %}
+
+  certbot:
+    image: "{{ certbot_image }}"
+    pull_policy: if_not_present
+    restart: unless-stopped
+{% if nginx_local_acme | bool %}
+    environment:
+      REQUESTS_CA_BUNDLE: /pebble-ca.pem
+{% endif %}
+    volumes:
+      - "{{ nginx_deploy_dir }}/certbot/www:/var/www/certbot"
+      - "{{ nginx_deploy_dir }}/certbot/conf:/etc/letsencrypt"
+      - "{{ nginx_deploy_dir }}/bin/certbot-renew-loop.sh:/renew-loop.sh:ro"
+{% if nginx_local_acme | bool %}
+      - "{{ nginx_deploy_dir }}/pebble/pebble.minica.pem:/pebble-ca.pem:ro"
+{% endif %}
+    entrypoint: ["/bin/sh", "/renew-loop.sh"]
+{% if nginx_local_acme | bool %}
+
+  pebble:
+    image: "{{ pebble_image }}"
+    pull_policy: if_not_present
+    restart: unless-stopped
+    command: ["-config", "/test/config/pebble-config.json"]
+    environment:
+      PEBBLE_VA_NOSLEEP: "1"
+      PEBBLE_WFE_NONCEREJECT: "0"
+    ports:
+      - "{{ pebble_port }}:14000"
+    volumes:
+      - "{{ nginx_deploy_dir }}/pebble/pebble-config.json:/test/config/pebble-config.json:ro"
+{% if (nginx_server_names | default([])) | length > 0 %}
+    extra_hosts:
+{% for name in nginx_server_names %}
+      - "{{ name }}:host-gateway"
+{% endfor %}
+{% endif %}
+{% endif %}
+
+networks:
+  default:
+    name: "{{ nginx_compose_project_name }}-net"

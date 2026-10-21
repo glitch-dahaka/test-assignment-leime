@@ -1,0 +1,7 @@
+---
+- name: Deploy nginx and certbot
+  hosts: nginx
+  gather_facts: false
+  become: "{{ nginx_become | bool }}"
+  roles:
+    - nginx_compose

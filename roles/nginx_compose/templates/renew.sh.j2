@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+docker compose --project-directory "{{ nginx_deploy_dir }}" exec -T certbot certbot renew --webroot -w /var/www/certbot
+docker compose --project-directory "{{ nginx_deploy_dir }}" exec -T nginx nginx -s reload

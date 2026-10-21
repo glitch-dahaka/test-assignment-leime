@@ -1,0 +1,33 @@
+---
+- name: nginx -t
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --project-directory
+      - "{{ nginx_deploy_dir }}"
+      - exec
+      - -T
+      - nginx
+      - nginx
+      - -t
+  register: nginx_test
+  changed_when: false
+  retries: 20
+  delay: 1
+  until: nginx_test.rc == 0
+
+- name: Reload nginx
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --project-directory
+      - "{{ nginx_deploy_dir }}"
+      - exec
+      - -T
+      - nginx
+      - nginx
+      - -s
+      - reload
+  changed_when: false

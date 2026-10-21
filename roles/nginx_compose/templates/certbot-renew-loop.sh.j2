@@ -1,0 +1,7 @@
+#!/bin/sh
+trap 'exit 0' TERM INT
+while :; do
+  certbot renew --webroot -w /var/www/certbot --quiet || true
+  sleep {{ certbot_renew_seconds }} &
+  wait $!
+done
