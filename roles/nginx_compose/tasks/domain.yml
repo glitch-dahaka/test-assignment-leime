@@ -1,0 +1,138 @@
+---
+- name: "Directories for {{ domain.name }}"
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ nginx_deploy_dir }}/nginx/history/{{ domain.name }}"
+    - "{{ nginx_deploy_dir }}/nginx/robots/{{ domain.name }}"
+
+- name: "chmod letsencrypt tree before {{ domain.name }}"
+  ansible.builtin.command:
+    argv:
+      - docker
+      - compose
+      - --project-directory
+      - "{{ nginx_deploy_dir }}"
+      - run
+      - --rm
+      - --no-deps
+      - --entrypoint
+      - chmod
+      - certbot
+      - -R
+      - a+rX
+      - /etc/letsencrypt
+  changed_when: false
+
+- name: "Stat {{ domain.name }} certificate"
+  ansible.builtin.stat:
+    path: "{{ nginx_deploy_dir }}/certbot/conf/live/{{ domain.name }}/fullchain.pem"
+    follow: false
+  register: domain_cert
+
+- name: "HTTP vhost {{ domain.name }}"
+  ansible.builtin.template:
+    src: http-server.conf.j2
+    dest: "{{ nginx_deploy_dir }}/nginx/conf.d/{{ domain.name }}.conf"
+    mode: "0644"
+  when: not domain_cert.stat.exists
+  register: http_conf
+
+- name: "Keep HTTP vhost {{ domain.name }}"
+  ansible.builtin.template:
+    src: http-server.conf.j2
+    dest: "{{ nginx_deploy_dir }}/nginx/history/{{ domain.name }}/01-http.conf"
+    mode: "0644"
+
+- name: "Reload HTTP vhost {{ domain.name }}"
+  ansible.builtin.include_tasks: reload.yml
+  when: http_conf is defined and (http_conf.changed | default(false))
+
+- name: "Write ACME probe {{ domain.name }}"
+  ansible.builtin.copy:
+    dest: "{{ nginx_deploy_dir }}/certbot/www/.well-known/acme-challenge/{{ domain.name }}"
+    content: "ok-{{ domain.name }}"
+    mode: "0644"
+  when:
+    - nginx_acme_probe | bool
+    - not domain_cert.stat.exists
+
+- name: "Curl ACME probe {{ domain.name }}"
+  ansible.builtin.command:
+    argv:
+      - curl
+      - -fsS
+      - --max-time
+      - "5"
+      - --resolve
+      - "{{ domain.name }}:{{ nginx_http_port }}:127.0.0.1"
+      - "http://{{ domain.name }}:{{ nginx_http_port }}/.well-known/acme-challenge/{{ domain.name }}"
+  register: acme_probe
+  changed_when: false
+  failed_when: false
+  retries: 20
+  delay: 1
+  until: acme_probe.rc == 0 and ((acme_probe.stdout | default('')) | trim) == ('ok-' ~ domain.name)
+  when:
+    - nginx_acme_probe | bool
+    - not domain_cert.stat.exists
+
+- name: "ACME probe failed for {{ domain.name }}"
+  ansible.builtin.fail:
+    msg: >-
+      no ACME response for {{ domain.name }} on port {{ nginx_http_port }}:
+      {{ acme_probe.stdout | default('') }} {{ acme_probe.stderr | default('') }}
+  when: >-
+    (nginx_acme_probe | bool) and not domain_cert.stat.exists and (
+      (acme_probe.rc | default(1) | int) != 0
+      or ((acme_probe.stdout | default('')) | trim) != ('ok-' ~ domain.name)
+    )
+
+- name: "Remove ACME probe {{ domain.name }}"
+  ansible.builtin.file:
+    path: "{{ nginx_deploy_dir }}/certbot/www/.well-known/acme-challenge/{{ domain.name }}"
+    state: absent
+  when:
+    - nginx_acme_probe | bool
+    - not domain_cert.stat.exists
+
+- name: "Certificate for {{ domain.name }}"
+  ansible.builtin.include_tasks: issue_certificate.yml
+
+- name: "robots.txt for {{ domain.name }}"
+  ansible.builtin.template:
+    src: robots.txt.j2
+    dest: "{{ nginx_deploy_dir }}/nginx/robots/{{ domain.name }}/robots.txt"
+    mode: "0644"
+
+- name: "htpasswd for {{ domain.name }}"
+  ansible.builtin.template:
+    src: htpasswd.j2
+    dest: "{{ nginx_deploy_dir }}/nginx/htpasswd/{{ domain.name }}"
+    mode: "0644"
+  when: (domain.basic_auth | default({})).enabled | default(false) | bool
+
+- name: "Remove htpasswd {{ domain.name }}"
+  ansible.builtin.file:
+    path: "{{ nginx_deploy_dir }}/nginx/htpasswd/{{ domain.name }}"
+    state: absent
+  when: not ((domain.basic_auth | default({})).enabled | default(false) | bool)
+
+- name: "HTTPS vhost {{ domain.name }}"
+  ansible.builtin.template:
+    src: https-server.conf.j2
+    dest: "{{ nginx_deploy_dir }}/nginx/conf.d/{{ domain.name }}.conf"
+    mode: "0644"
+  register: https_conf
+
+- name: "Keep HTTPS vhost {{ domain.name }}"
+  ansible.builtin.template:
+    src: https-server.conf.j2
+    dest: "{{ nginx_deploy_dir }}/nginx/history/{{ domain.name }}/02-https.conf"
+    mode: "0644"
+
+- name: "Reload HTTPS vhost {{ domain.name }}"
+  ansible.builtin.include_tasks: reload.yml
+  when: https_conf is changed

@@ -1,0 +1,12 @@
+---
+- name: "Write certbot script for {{ domain.name }}"
+  ansible.builtin.template:
+    src: issue-cert.sh.j2
+    dest: "{{ nginx_deploy_dir }}/bin/issue-{{ domain.name }}.sh"
+    mode: "0755"
+
+- name: "Issue {{ domain.name }}"
+  ansible.builtin.command:
+    argv:
+      - "{{ nginx_deploy_dir }}/bin/issue-{{ domain.name }}.sh"
+  when: not domain_cert.stat.exists

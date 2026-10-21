@@ -1,0 +1,51 @@
+---
+nginx_deploy_dir: "{{ inventory_dir }}/../../.runtime/nginx"
+nginx_compose_project_name: nginx-letsencrypt-local
+nginx_main_config_src: "{{ inventory_dir }}/../../config/nginx.conf"
+nginx_become: false
+nginx_install_renew_cron: false
+
+certbot_email: local-test@example.com
+certbot_staging: false
+certbot_server: https://pebble:14000/dir
+nginx_local_acme: true
+
+nginx_domains:
+  - name: demo.test
+    aliases:
+      - www.demo.test
+    robots_txt: |
+      User-agent: *
+      Disallow: /admin
+    locations:
+      - path: /assets/
+        alias: /var/www/sites/demo-assets/
+        host_path: "{{ inventory_dir }}/../../tests/fixtures/assets"
+      - path: /api/
+        proxy_pass: http://host.docker.internal:18080/
+      - path: /health
+        return: "200 'ok'"
+      - path: /
+        root: /var/www/sites/demo.test
+        index: index.html
+        host_path: "{{ inventory_dir }}/../../tests/fixtures/demo"
+
+  - name: secure.test
+    basic_auth:
+      enabled: true
+      realm: Restricted
+      users:
+        - name: demo
+          password: demo-password
+        - name: auditor
+          password: auditor-password
+    robots_txt: |
+      User-agent: *
+      Disallow: /private
+    locations:
+      - path: /public/
+        alias: /var/www/sites/secure-public/
+        host_path: "{{ inventory_dir }}/../../tests/fixtures/secure-public"
+        basic_auth: false
+      - path: /
+        return: "200 'secret'"

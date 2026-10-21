@@ -1,0 +1,6 @@
+{% if domain.robots_txt is defined and (domain.robots_txt | length) > 0 -%}
+{{ domain.robots_txt | trim }}
+{% else -%}
+User-agent: *
+Disallow:
+{% endif %}

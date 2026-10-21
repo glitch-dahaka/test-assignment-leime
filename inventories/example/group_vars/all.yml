@@ -1,0 +1,37 @@
+---
+nginx_deploy_dir: /opt/nginx-proxy
+nginx_compose_project_name: nginx-proxy
+nginx_become: true
+nginx_install_renew_cron: true
+
+nginx_main_config_src: ""
+
+certbot_email: admin@example.com
+certbot_staging: true
+certbot_agree_tos: true
+
+nginx_domains:
+  - name: example.com
+    aliases:
+      - www.example.com
+    robots_txt: |
+      User-agent: *
+      Disallow: /admin
+    locations:
+      - path: /assets/
+        alias: /var/www/example/assets/
+        host_path: /srv/www/example/assets
+      - path: /
+        proxy_pass: http://10.0.0.10:8080
+
+  - name: admin.example.com
+    basic_auth:
+      enabled: true
+      realm: Restricted
+      users:
+        - name: admin
+          password: change-me
+    locations:
+      - path: /
+        proxy_pass: http://10.0.0.10:8081
+        websocket: true

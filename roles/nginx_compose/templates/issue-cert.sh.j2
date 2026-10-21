@@ -1,0 +1,21 @@
+#!/bin/sh
+set -eu
+exec docker compose \
+  --project-directory "{{ nginx_deploy_dir }}" \
+  run --rm --no-deps \
+  --entrypoint certbot \
+  certbot \
+  certonly \
+  --webroot -w /var/www/certbot \
+  --cert-name "{{ domain.name }}" \
+  --email "{{ certbot_email }}" \
+  --agree-tos \
+  --non-interactive \
+  --keep-until-expiring \
+{% if certbot_server | length > 0 %}
+  --server "{{ certbot_server }}" \
+{% elif certbot_staging | bool %}
+  --staging \
+{% endif %}
+  -d "{{ domain.name }}"{% for alias in domain.aliases | default([]) %} \
+  -d "{{ alias }}"{% endfor %}
