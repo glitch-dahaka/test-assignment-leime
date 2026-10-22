@@ -1,0 +1,20 @@
+---
+- name: "Basic auth users for {{ domain.name }}"
+  ansible.builtin.assert:
+    that:
+      - (domain.basic_auth.users | default([])) | length > 0
+      - domain.basic_auth.realm is not defined or domain.basic_auth.realm is match('^[A-Za-z0-9 ._-]+$')
+    fail_msg: "{{ domain.name }}: basic auth needs users and a plain realm"
+  no_log: true
+
+- name: "Basic auth account names for {{ domain.name }}"
+  ansible.builtin.assert:
+    that:
+      - user.name is match('^[A-Za-z0-9._-]+$')
+      - user.password | string | length > 0
+    fail_msg: "{{ domain.name }}: bad basic auth username or empty password"
+  no_log: true
+  loop: "{{ domain.basic_auth.users }}"
+  loop_control:
+    loop_var: user
+    label: "{{ user.name }}"
