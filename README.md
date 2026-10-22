@@ -6,19 +6,32 @@
 
 ## Запуск
 
-Нужны Docker Compose v2, `curl`, `openssl` и Ansible 2.17+. В этом каталоге Ansible уже стоит в `.venv`, `make` берёт его сам.
+Нужны Docker Compose v2, `curl`, `openssl`, Python 3 и Ansible 2.17+. Пользователь должен иметь право запускать Docker. Порты **80**, **443** и **14000** должны быть свободны. Порт **18080** занят только на время `make verify`.
+
+`.venv` и `.runtime` в репозиторий не входят. После клонирования или распаковки архива их ещё нет: Ansible ставится в каталоге проекта, стенд создаёт `make deploy`.
 
 ```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 make deploy
 make verify
+```
+
+`make` берёт `ansible-playbook` из `.venv`. Если в `PATH` уже есть Ansible 2.17+, первые две команды не нужны.
+
+`make deploy` читает `inventories/local`, пишет файлы в `.runtime/nginx` и поднимает nginx, certbot и Pebble. Для `demo.test`, `www.demo.test` и `secure.test` плейбук сам проходит весь сценарий: HTTP-конфиг, сертификат, TLS, редирект, `robots.txt`, locations и basic auth. Первый запуск скачивает образы.
+
+`make verify` проверяет этот результат и запускает плейбук ещё раз. В конце строка `ok`. На время проверки скрипт поднимает на порту 18080 сервер, на который смотрит location `/api/`. Остальные пути отвечают уже после `make deploy`.
+
+Убрать стенд:
+
+```bash
 make destroy
 ```
 
 ## Локальный стенд
 
-`make deploy` читает `inventories/local` и слушает порты **80** и **443**. Каталог стенда — `.runtime/nginx`, в git он не входит.
-
-`demo.test`, `www.demo.test` и `secure.test` снаружи не видны, поэтому сертификат выпускает Pebble тем же webroot-запросом, что и Let's Encrypt. Браузер этот сертификат не доверит.
+Стенд слушает порты **80** и **443**. `demo.test`, `www.demo.test` и `secure.test` снаружи не видны, поэтому сертификат выпускает Pebble тем же webroot-запросом, что и Let's Encrypt. Браузер этот сертификат не доверит.
 
 Имена на localhost:
 
@@ -90,7 +103,7 @@ nginx_deploy_dir/
 
 Список `nginx_domains`, образец в `inventories/example/group_vars/all.yml`. У location один обработчик.
 
-Процесс на хосте из контейнера виден как `host.docker.internal` (`host-gateway`): `http://host.docker.internal:18080/`.
+Процесс на хосте из контейнера виден как `host.docker.internal` (`host-gateway`): `http://host.docker.internal:18080/`. На локальном стенде этот процесс запускает `make verify`.
 
 ## Basic auth
 
